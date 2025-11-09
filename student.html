@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>学生成绩查询</title>
+  <style>
+    .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+    .info-box { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+    .grades-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    .grades-table th, .grades-table td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+    .debug-log { margin: 10px 0; padding: 10px; background: #f9f9f9; font-size: 12px; color: #666; max-height: 200px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>我的成绩</h1>
+    <div id="grades" class="grades-container">加载成绩中...</div>
+    <div class="debug-log" id="debugLog">调试信息：</div>
+
+    <h1>个人信息</h1>
+    <div id="info" class="info-box">加载个人信息中...</div>
+
+    <button onclick="logout()">退出登录</button>
+  </div>
+
+  <script>
+    const API_BASE_URL = 'https://b16qogg9oa.execute-api.ap-northeast-2.amazonaws.com/prod';  
+
+    // 关键：课程名→课程ID映射表（与教师端gradeId的前缀完全一致）
+    const COURSE_ID_MAP = {
+      "大学物理": "PHY101",   // 课程名对应教师端的课程ID
+      "高等数学": "MATH101"  // 课程名对应教师端的课程ID
+    };
+
+    window.onload = async () => {
+      const idToken = localStorage.getItem('idToken');
+      if (!idToken) {
+        alert('未登录，请先登录');
+        window.location.href = 'index.html';
+        return;
+      }
+
+      try {
+        await fetchStudentInfo(idToken);
+        await fetchFilteredGradesByPeriod(idToken);
+      } catch (err) {
+        logDebug(`数据加载失败：${err.message}`);
+        alert('数据加载失败，请刷新页面重试');
+      }
+    };
+
+    // 个人信息功能（不变）
+    async function fetchStudentInfo(idToken) {
+      const infoContainer = document.getElementById('info');
+      try {
+        const response = await fetch(`${API_BASE_URL}/info`, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${idToken}` }
+        });
+
+        if (!response.ok) throw new Error(`状态码：${response.status}`);
+        const studentInfo = await response.json();
+        infoContainer.innerHTML = `
+          <p>学号：${studentInfo.studentId}</p>
+          <p>姓名：${studentInfo.name || '未填写'}</p>
+          <p>班级：${studentInfo.className || '未填写'}</p>
+          <p>性别：${studentInfo.gender || '未填写'}</p>
+        `;
+      } catch (err) {
+        infoContainer.innerHTML = `个人信息加载失败：${err.message}`;
+        throw err;
+      }
+    }
+
+    // 核心：生成与教师端一致的gradeID，查询并过滤成绩
+    async function fetchFilteredGradesByPeriod(idToken) {
+      const gradesContainer = document.getElementById('grades');
+      try {
+        // 1. 获取所有成绩
+        const gradesResponse = await fetch(`${API_BASE_URL}/grades`, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${idToken}` }
+        });
+        if (!gradesResponse.ok) throw new Error(`成绩接口状态码：${gradesResponse.status}`);
+        const allGrades = await gradesResponse.json();
+        logDebug(`获取到${allGrades.length}条成绩：${JSON.stringify(allGrades)}`);
+        if (allGrades.length === 0) {
+          gradesContainer.innerHTML = '暂无成绩记录';
+          return;
+        }
+
+        // 2. 处理每门成绩（生成与教师端一致的gradeID）
+        const processedGrades = [];
+        for (const grade of allGrades) {
+          // 步骤A：通过课程名获取课程ID（从映射表中查找）
+          const courseId = COURSE_ID_MAP[grade.course]; 
+          if (!courseId) {
+            logDebug(`警告：课程${grade.course}未配置映射，gradeID生成失败`);
+            processedGrades.push({...grade, displayScore: '不在查询时间'});
+            continue;
+          }
+
+          // 步骤B：处理学期格式（添加“年”字，与教师端一致，如“2023秋”→“2023年秋”）
+          const semesterWithYear = grade.semester.replace('秋', '年秋'); 
+
+          // 步骤C：生成gradeID（课程ID_带年学期，与教师端完全匹配）
+          const gradeID = `${courseId}_${semesterWithYear}`; 
+          logDebug(`处理课程：${grade.course}，生成gradeID：${gradeID}`);
+
+          // 3. 查询该课程的时段设置
+          const period = await getQueryPeriod(gradeID, idToken);
+          if (!period) {
+            logDebug(`未查询到${grade.course}的时段设置（可能老师未设置）`);
+            processedGrades.push({...grade, displayScore: '不在查询时间'});
+            continue;
+          }
+          logDebug(`查询到${grade.course}的时段：开始=${period.startTime}，结束=${period.endTime}`);
+
+          // 4. 判断当前时间是否在时段内
+          const isWithin = checkIfWithinPeriod(period);
+          processedGrades.push({
+            ...grade,
+            displayScore: isWithin ? grade.score : '不在查询时间'
+          });
+        }
+
+        // 5. 渲染表格
+        let tableHtml = `
+          <table class="grades-table">
+            <tr><th>课程名</th><th>分数</th><th>学期</th></tr>
+        `;
+        processedGrades.forEach(grade => {
+          tableHtml += `
+            <tr>
+              <td>${grade.course}</td>
+              <td>${grade.displayScore}</td>
+              <td>${grade.semester}</td>
+            </tr>
+          `;
+        });
+        tableHtml += '</table>';
+        gradesContainer.innerHTML = tableHtml;
+
+      } catch (err) {
+        gradesContainer.innerHTML = `成绩加载失败：${err.message}`;
+        throw err;
+      }
+    }
+
+    // 查询时段接口（不变，确保后续CORS配置后可访问）
+// 修改getQueryPeriod函数，添加令牌存在性检查
+async function getQueryPeriod(gradeID, idToken) {
+  // 新增：打印令牌是否存在（仅显示前10位，避免泄露完整令牌）
+  logDebug(`使用的idToken：${idToken ? idToken.substring(0, 10) + '...' : '不存在'}`);
+  
+  try {
+    const url = `${API_BASE_URL}/teacher/set-period?gradeId=${encodeURIComponent(gradeID)}`;
+    logDebug(`查询时段接口：${url}`);
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 
+        'Authorization': `Bearer ${idToken}`, // 确保携带令牌
+        'Content-Type': 'application/json'
+      },
+      mode: 'cors'
+    });
+
+    // 新增：打印响应状态码和状态文本
+    logDebug(`接口响应状态：${response.status} ${response.statusText}`);
+
+    if (response.status === 401) {
+      logDebug(`401错误：令牌无效或未授权，请重新登录`);
+      alert('身份验证失败，请重新登录');
+      logout(); // 自动跳转到登录页
+      return null;
+    }
+
+    if (response.status === 404) {
+      logDebug(`接口返回404：未找到${gradeID}的时段`);
+      return null;
+    }
+    if (!response.ok) throw new Error(`时段接口状态码：${response.status}，响应：${await response.text()}`);
+
+    const period = await response.json();
+    if (!period.startTime || !period.endTime) {
+      logDebug(`时段数据不完整：${JSON.stringify(period)}`);
+      return null;
+    }
+    return period;
+  } catch (err) {
+    logDebug(`查询时段失败：${err.message}`);
+    return null;
+  }
+}
+
+    // 时间判断逻辑（不变）
+    function checkIfWithinPeriod(period) {
+      try {
+        const now = new Date();
+        const startTime = new Date(period.startTime);
+        const endTime = new Date(period.endTime);
+
+        logDebug(`时间对比：当前=${now.toLocaleString()}, 开始=${startTime.toLocaleString()}, 结束=${endTime.toLocaleString()}`);
+
+        if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+          logDebug(`时间格式错误：${period.startTime} 或 ${period.endTime}`);
+          return false;
+        }
+
+        return now >= startTime && now <= endTime;
+      } catch (err) {
+        logDebug(`时间判断失败：${err.message}`);
+        return false;
+      }
+    }
+
+    // 调试日志
+    function logDebug(message) {
+      const logElement = document.getElementById('debugLog');
+      logElement.innerHTML += `<br>${new Date().toLocaleTimeString()}：${message}`;
+    }
+
+    // 退出登录
+    function logout() {
+      localStorage.removeItem('idToken');
+      window.location.href = 'index.html';
+    }
+  </script>
+</body>
+</html>

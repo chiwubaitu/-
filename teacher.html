@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教师成绩管理系统</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .logout-btn, .delete-btn {
+            background-color: #f44336;
+            margin-left: 10px;
+        }
+        .delete-btn {
+            padding: 5px 10px;
+            font-size: 14px;
+            margin: 0;
+        }
+        .message {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            transition: opacity 0.3s;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #eee;
+            border-radius: 6px;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        table th, table td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+        table th {
+            background-color: #f5f5f5;
+        }
+        small {
+            color: #666;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>教师成绩管理系统</h1>
+
+    <!-- 单个成绩录入 -->
+    <div class="section">
+        <h2>1. 单个成绩录入</h2>
+        <div class="form-container">
+            <form id="gradeForm">
+                <div class="form-group">
+                    <label for="studentId">学生学号：</label>
+                    <input type="text" id="studentId" required placeholder="例如：2023001">
+                </div>
+                <div class="form-group">
+                    <label for="courseName">课程名称：</label>
+                    <input type="text" id="courseName" required placeholder="例如：高等数学">
+                </div>
+                <div class="form-group">
+                    <label for="semester">学期：</label>
+                    <input type="text" id="semester" required placeholder="例如：2023秋">
+                </div>
+                <div class="form-group">
+                    <label for="score">分数（0-100）：</label>
+                    <input type="number" id="score" min="0" max="100" step="0.5" required>
+                </div>
+                <div>
+                    <button type="submit">提交成绩</button>
+                    <button type="button" class="logout-btn" onclick="logout()">退出登录</button>
+                </div>
+            </form>
+            <div id="message" class="message" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- 批量上传成绩 -->
+    <div class="section">
+        <h2>2. 批量上传成绩（CSV）</h2>
+        <div class="form-group">
+            <label for="gradeFile">选择文件（仅支持.csv格式）：</label>
+            <input type="file" id="gradeFile" accept=".csv">
+        </div>
+        <button onclick="uploadGrades()">上传文件</button>
+        <div id="uploadMessage" class="message" style="display: none;"></div>
+    </div>
+
+    <!-- 设置查询时段 -->
+    <div class="section">
+        <h2>3. 设置成绩查询时段</h2>
+        <div class="form-group">
+            <label for="courseSelect">课程：</label>
+            <select id="courseSelect" required>
+                <option value="">-- 加载中，请稍候 --</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="periodSemester">学期：</label>
+            <input type="text" id="periodSemester" required placeholder="例如：2023秋">
+        </div>
+        <div class="form-group">
+            <label for="startTime">查询开始时间：</label>
+            <input type="datetime-local" id="startTime" required>
+            <small>格式：年-月-日 时:分（例如：2023-09-01T08:00）</small>
+        </div>
+        <div class="form-group">
+            <label for="endTime">查询结束时间：</label>
+            <input type="datetime-local" id="endTime" required>
+            <small>格式：年-月-日 时:分（例如：2023-12-31T23:59）</small>
+        </div>
+        <button onclick="setQueryPeriod()">保存查询时段</button>
+        <div id="periodMessage" class="message" style="display: none;"></div>
+    </div>
+
+    <!-- 成绩列表管理 -->
+    <div class="section">
+        <h2>4. 成绩列表管理</h2>
+        <button onclick="loadGrades()">刷新成绩列表</button>
+        <table id="gradesTable">
+            <tr>
+                <th>学生学号</th>
+                <th>课程名称</th>
+                <th>学期</th>
+                <th>分数</th>
+                <th>操作</th>
+            </tr>
+        </table>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'https://b16qogg9oa.execute-api.ap-northeast-2.amazonaws.com/prod';
+
+        window.onload = () => {
+            const idToken = localStorage.getItem('idToken');
+            if (!idToken) {
+                alert('请先登录教师账号');
+                window.location.href = 'index.html';
+                return;
+            }
+            initCourseList(); // 动态加载课程列表
+            loadGrades();
+        };
+
+        // 单个成绩提交
+        document.getElementById('gradeForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const messageElement = document.getElementById('message');
+            messageElement.style.display = 'none';
+
+            try {
+                const studentId = document.getElementById('studentId').value.trim();
+                const courseName = document.getElementById('courseName').value.trim();
+                const semester = document.getElementById('semester').value.trim();
+                const score = parseFloat(document.getElementById('score').value);
+
+                if (!studentId || !courseName || !semester) {
+                    showMessage('请填写完整信息', 'error', 'message');
+                    return;
+                }
+                if (isNaN(score) || score < 0 || score > 100) {
+                    showMessage('分数必须是0-100之间的数字', 'error', 'message');
+                    return;
+                }
+
+                const idToken = localStorage.getItem('idToken');
+                const response = await fetch(`${API_BASE_URL}/grades`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${idToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ studentId, courseName, semester, score })
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    showMessage('成绩录入成功！', 'success', 'message');
+                    document.getElementById('gradeForm').reset();
+                    loadGrades();
+                } else {
+                    showMessage(`录入失败：${result.message || '未知错误'}`, 'error', 'message');
+                }
+
+            } catch (err) {
+                showMessage(`网络错误：${err.message}`, 'error', 'message');
+                console.error('提交失败：', err);
+            }
+        });
+
+        // 批量上传成绩
+        async function uploadGrades() {
+            const fileInput = document.getElementById('gradeFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                showMessage('请选择要上传的文件', 'error', 'uploadMessage');
+                return;
+            }
+
+            const idToken = localStorage.getItem('idToken');
+            if (!idToken) {
+                showMessage('请先登录教师账号', 'error', 'uploadMessage');
+                return;
+            }
+
+            const fileName = file.name.toLowerCase();
+            if (!fileName.endsWith('.csv')) {
+                showMessage('仅支持.csv格式的文件', 'error', 'uploadMessage');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const url = new URL(`${API_BASE_URL}/teacher/upload`);
+                url.searchParams.append('filename', file.name);
+
+                const response = await fetch(url.toString(), {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${idToken}` },
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    showMessage(`上传成功：${result.message}`, 'success', 'uploadMessage');
+                    fileInput.value = '';
+                    loadGrades();
+                } else {
+                    showMessage(`上传失败：${result.message || '服务器错误'}`, 'error', 'uploadMessage');
+                }
+
+            } catch (err) {
+                showMessage(`上传失败：${err.message}`, 'error', 'uploadMessage');
+                console.error('文件上传错误：', err);
+            }
+        }
+
+        // 设置查询时段（优化版）
+        async function setQueryPeriod() {
+            const courseSelect = document.getElementById('courseSelect');
+            const courseId = courseSelect.value;
+            const courseName = courseSelect.options[courseSelect.selectedIndex].text;
+            const semester = document.getElementById('periodSemester').value.trim();
+            const startTime = document.getElementById('startTime').value;
+            const endTime = document.getElementById('endTime').value;
+
+            // 表单验证
+            if (!courseId) {
+                showMessage('请选择课程', 'error', 'periodMessage');
+                return;
+            }
+            if (!semester) {
+                showMessage('请输入学期', 'error', 'periodMessage');
+                return;
+            }
+            if (!startTime || !endTime) {
+                showMessage('请选择开始和结束时间', 'error', 'periodMessage');
+                return;
+            }
+            if (new Date(startTime) >= new Date(endTime)) {
+                showMessage('开始时间不能晚于结束时间', 'error', 'periodMessage');
+                return;
+            }
+
+            // 生成gradeID（与后端保持一致）
+            const gradeID = `${courseId}_${semester}`;
+
+            try {
+                const idToken = localStorage.getItem('idToken');
+                const response = await fetch(`${API_BASE_URL}/teacher/set-period`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${idToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        gradeID, 
+                        startTime, 
+                        endTime,
+                        courseId,  // 额外传递课程ID和学期，方便后端处理
+                        semester 
+                    })
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    showMessage(`查询时段设置成功！课程：${courseName}（${semester}）`, 'success', 'periodMessage');
+                } else {
+                    showMessage(`设置失败：${result.message || '服务器错误'}`, 'error', 'periodMessage');
+                }
+
+            } catch (err) {
+                showMessage(`设置失败：${err.message}`, 'error', 'periodMessage');
+                console.error('时段设置错误：', err);
+            }
+        }
+
+        // 加载成绩列表
+        async function loadGrades() {
+            try {
+                const idToken = localStorage.getItem('idToken');
+                const response = await fetch(`${API_BASE_URL}/teacher/grades`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const apiResponse = await response.json();
+                console.log('API返回完整数据：', apiResponse);
+
+                if (apiResponse.statusCode !== 200) {
+                    throw new Error(`获取成绩失败：${apiResponse.body || '未知错误'}`);
+                }
+
+                let grades = [];
+                try {
+                    grades = JSON.parse(apiResponse.body);
+                } catch (e) {
+                    console.error('解析成绩数据失败：', e);
+                    throw new Error('成绩数据格式错误');
+                }
+
+                console.log('解析后的成绩列表：', grades);
+
+                const table = document.getElementById('gradesTable');
+                while (table.rows.length > 1) table.deleteRow(1);
+
+                if (grades.length === 0) {
+                    const row = table.insertRow();
+                    row.innerHTML = `<td colspan="5" style="text-align:center">暂无成绩数据</td>`;
+                } else {
+                    grades.forEach(grade => {
+                        const row = table.insertRow();
+                        row.innerHTML = `
+                            <td>${grade.studentId || '未知学号'}</td>
+                            <td>${grade.course || '未知课程'}</td>
+                            <td>${grade.term || '未知学期'}</td>
+                            <td>${grade.score !== undefined ? grade.score : '未知分数'}</td>
+                            <td>
+                                <button class="delete-btn" 
+                                        onclick="deleteGrade('${grade.studentId || ''}', '${grade.gradeId || ''}')">
+                                    删除
+                                </button>
+                            </td>
+                        `;
+                    });
+                }
+            } catch (err) {
+                console.error('加载成绩错误：', err);
+                alert(`加载失败：${err.message}`);
+            }
+        }
+
+        // 删除成绩
+        async function deleteGrade(studentId, gradeId) {
+            if (!studentId || !gradeId) {
+                alert('成绩信息不完整，无法删除');
+                return;
+            }
+            if (!confirm(`确定删除学号${studentId}的成绩吗？`)) {
+                return;
+            }
+
+            try {
+                const idToken = localStorage.getItem('idToken');
+                const url = new URL(`${API_BASE_URL}/teacher/grades`);
+                url.searchParams.append('studentId', studentId);
+                url.searchParams.append('gradeId', encodeURIComponent(gradeId));
+
+                const response = await fetch(url.toString(), {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    alert('删除成功');
+                    loadGrades();
+                } else {
+                    alert(`删除失败：${result.message || '未知错误'}`);
+                }
+            } catch (err) {
+                console.error('删除请求错误：', err);
+                alert(`删除失败：${err.message}`);
+            }
+        }
+
+async function initCourseList() {
+    const select = document.getElementById('courseSelect');
+    try {
+        const idToken = localStorage.getItem('idToken');
+        const response = await fetch(`${API_BASE_URL}/teacher/courses`, {
+            headers: { 
+                'Authorization': `Bearer ${idToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // 1. 先解析后端返回的完整响应（包含statusCode、headers、body）
+        const apiResponse = await response.json();
+        console.log('后端完整响应：', apiResponse);
+
+        // 2. 检查响应是否成功
+        if (apiResponse.statusCode !== 200) {
+            throw new Error(`课程列表获取失败：${apiResponse.body || '未知错误'}`);
+        }
+
+        // 3. 从body字段中解析出课程数组（关键修复）
+        let courses = [];
+        try {
+            // 后端body是JSON字符串，需再次解析为数组
+            courses = JSON.parse(apiResponse.body);
+        } catch (e) {
+            throw new Error(`课程列表格式错误：${e.message}`);
+        }
+
+        // 4. 清空下拉框并添加选项
+        select.innerHTML = '<option value="">-- 选择课程 --</option>';
+        
+        // 验证是否为数组
+        if (Array.isArray(courses)) {
+            courses.forEach(course => {
+                const option = document.createElement('option');
+                option.value = course.courseId;
+                option.textContent = course.courseName; // 自动解码Unicode（如\u9ad8→高）
+                select.appendChild(option);
+            });
+        } else {
+            throw new Error('课程列表不是数组格式');
+        }
+
+    } catch (err) {
+        console.error('加载课程列表失败：', err);
+        // 降级显示默认课程
+        select.innerHTML = `
+            <option value="">-- 课程加载失败 --</option>
+            <option value="MATH101">高等数学</option>
+            <option value="CS101">计算机基础</option>
+            <option value="PHY101">大学物理</option>
+        `;
+        showMessage(`课程列表加载失败：${err.message}`, 'error', 'periodMessage');
+    }
+}
+
+        // 显示提示信息（带自动隐藏）
+        function showMessage(text, type, elementId) {
+            const element = document.getElementById(elementId);
+            element.textContent = text;
+            element.className = `message ${type}`;
+            element.style.display = 'block';
+            // 3秒后自动隐藏
+            setTimeout(() => {
+                element.style.display = 'none';
+            }, 3000);
+        }
+
+        // 退出登录
+        function logout() {
+            localStorage.removeItem('idToken');
+            alert('已退出登录');
+            window.location.href = 'index.html';
+        }
+    </script>
+</body>
+</html>

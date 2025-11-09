@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>登录系统</title>
+</head>
+<body>
+  <h1>用户登录</h1>
+  <form id="loginForm">
+    <input type="text" id="username" placeholder="输入用户名" required><br><br>
+    <input type="password" id="password" placeholder="输入密码" required><br><br>
+    <button type="submit">登录</button>
+  </form>
+
+  <div id="newPasswordForm" style="display: none;">
+    <h3>请设置新密码</h3>
+    <input type="password" id="newPassword" placeholder="新密码（至少8位，含数字和特殊字符）" required><br><br>
+    <button type="button" id="submitNewPassword">确认修改</button>
+  </div>
+
+  <script>
+    // Cognito配置（替换为你的实际配置）
+    const COGNITO_CONFIG = {
+      UserPoolId: 'ap-northeast-2_JMqOdOUCD', // 你的用户池ID
+      ClientId: '3tdg69948k37hled1idm536aj0', // 你的客户端ID
+      Region: 'ap-northeast-2' // 你的区域
+    };
+
+    let session = null; // 保存Cognito会话
+    let username = ''; // 保存当前用户名
+
+    // 登录表单提交
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+
+      try {
+        const authResponse = await fetch(`https://cognito-idp.${COGNITO_CONFIG.Region}.amazonaws.com/`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/x-amz-json-1.1', 
+            'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth' 
+          },
+          body: JSON.stringify({
+            AuthFlow: 'USER_PASSWORD_AUTH',
+            ClientId: COGNITO_CONFIG.ClientId,
+            AuthParameters: { USERNAME: username, PASSWORD: password }
+          })
+        });
+
+        const authData = await authResponse.json();
+        console.log('Cognito登录响应：', authData);
+
+        // 处理密码重置
+        if (authData.__type === 'PasswordResetRequiredException' || authData.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+          session = authData.Session;
+          document.getElementById('loginForm').style.display = 'none';
+          document.getElementById('newPasswordForm').style.display = 'block';
+        } 
+        // 登录成功
+        else if (authData.AuthenticationResult) {
+          handleSuccessfulLogin(authData.AuthenticationResult.IdToken);
+        } else {
+          alert('登录失败：' + (authData.message || '未知错误'));
+        }
+
+      } catch (err) {
+        console.error('登录错误：', err);
+        alert('登录失败：' + err.message);
+      }
+    });
+
+    // 新密码提交
+    document.getElementById('submitNewPassword').addEventListener('click', async () => {
+      const newPassword = document.getElementById('newPassword').value;
+      if (!newPassword || newPassword.length < 8) {
+        alert('请输入至少8位的新密码');
+        return;
+      }
+
+      try {
+        const response = await fetch(`https://cognito-idp.${COGNITO_CONFIG.Region}.amazonaws.com/`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/x-amz-json-1.1', 
+            'X-Amz-Target': 'AWSCognitoIdentityProviderService.RespondToAuthChallenge' 
+          },
+          body: JSON.stringify({
+            ChallengeName: 'NEW_PASSWORD_REQUIRED',
+            ClientId: COGNITO_CONFIG.ClientId,
+            Session: session,
+            ChallengeResponses: { NEW_PASSWORD: newPassword, USERNAME: username }
+          })
+        });
+
+        const data = await response.json();
+        if (data.AuthenticationResult) {
+          handleSuccessfulLogin(data.AuthenticationResult.IdToken);
+        } else {
+          alert('密码重置失败：' + (data.message || '密码不符合要求'));
+        }
+
+      } catch (err) {
+        console.error('密码重置错误：', err);
+        alert('操作失败：' + err.message);
+      }
+    });
+
+    // 登录成功处理（存储token并跳转）
+    function handleSuccessfulLogin(idToken) {
+      try {
+        // 存储idToken到localStorage（供student/teacher.html使用）
+        localStorage.setItem('idToken', idToken);
+        console.log('idToken已存储到localStorage');
+
+        // 解析令牌获取用户组
+        const tokenParts = idToken.split('.');
+        let payloadBase64 = tokenParts[1].replace(/-/g, '+').replace(/_/g, '/');
+        payloadBase64 += '='.repeat((4 - (payloadBase64.length % 4)) % 4);
+        const payload = JSON.parse(atob(payloadBase64));
+        const groups = payload['cognito:groups'] || [];
+        console.log('用户组：', groups);
+
+        // 按英文组名跳转（teacher→教师页，其他→学生页）
+        const isTeacher = groups.includes('teacher');
+        const targetUrl = isTeacher ? 'teacher.html' : 'student.html';
+        console.log('跳转至：', targetUrl);
+        setTimeout(() => window.location.href = targetUrl, 1000);
+
+      } catch (err) {
+        console.error('登录后处理错误：', err);
+        alert('登录成功，但跳转失败，请手动访问对应页面');
+      }
+    }
+  </script>
+</body>
+</html>
